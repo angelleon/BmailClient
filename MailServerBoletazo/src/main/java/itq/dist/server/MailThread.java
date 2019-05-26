@@ -188,34 +188,61 @@ public class MailThread extends Thread
             PdfContentByte over = stamper.getOverContent(i);
 
             // write text
-            over.beginText();
-            over.setFontAndSize(bf, 10); // Fuente y tamaño configurable
-            over.setTextMatrix(180, 540); // Posicion relacionada al nombre del evento.
-            over.showText(event); // Texto del nombre del evento SOPORTA 40
-                                  // CARACTERES
-            over.endText();
-            over.setTextMatrix(180, 530); // Posicion relacionada al nombre del evento.
-            over.showText("Cliente: " + userID); // texto numero de usuario que compro SOPORTA 40
-                                                 // CARACTERES
-            over.endText();
-            over.setTextMatrix(180, 520); // Posicion relacionada al nombre del evento.
-            over.showText("Asiento: " + seatID); // texto numero de usuario que compro SOPORTA 40
-                                                 // CARACTERES
-            over.endText();
-            over.setTextMatrix(180, 510); // Posicion relacionada al nombre del evento.
-            over.showText("Fecha: " + dateEvent); // texto numero de usuario que compro SOPORTA 40
-                                                  // CARACTERES
-            over.endText();
-            over.setTextMatrix(100, 70);
-            over.showText("Compra realizada con exito - " + DATE_FORMAT.format(date) + "  Hora de México");
-            img_selloValidez.setAbsolutePosition(100, 100);
-            over.addImage(img_selloValidez);
+            /*
+             * over.beginText(); over.setFontAndSize(bf, 10); // Fuente y tamaño
+             * configurable over.setTextMatrix(180, 540); // Posicion relacionada al nombre
+             * del evento. over.showText(event); // Texto del nombre del evento SOPORTA 40
+             * CARACTERES
+             */
+            writeOn(event, over, 180, 540);
+            /*
+             * over.endText(); over.setTextMatrix(180, 530); // Posicion relacionada al
+             * nombre del evento. over.showText("Cliente: " + userID); // texto numero de
+             * usuario que compro SOPORTA 40
+             */ // CARACTERES
+            writeOn("Cliente: " + userID, over, 180, 530);
+            /*
+             * over.endText(); over.setTextMatrix(180, 520); // Posicion relacionada al
+             * nombre del evento. over.showText("Asiento: " + seatID); // texto numero de
+             * usuario que compro SOPORTA 40 CARACTERES over.endText();
+             */
+            writeOn("Asiento: " + seatID, over, 180, 520);
+            /*
+             * over.setTextMatrix(180, 510); // Posicion relacionada al nombre del evento.
+             * over.showText("Fecha: " + dateEvent); // texto numero de usuario que compro
+             * SOPORTA 40 CARACTERES over.endText();
+             */
+            writeOn("Fecha: " + dateEvent, over, 180, 510);
+            // over.setTextMatrix(100, 70);
+            // over.showText("Compra realizada con exito - " + DATE_FORMAT.format(date) + "
+            // Hora de México");
+            writeOn("Compra realizada con exito - " + DATE_FORMAT.format(date) + "  Hora de México",
+                    over, 100, 70);
+            // img_selloValidez.setAbsolutePosition(100, 100);
+            // over.addImage(img_selloValidez);
+            writeOnImage(img_selloValidez, date, over, 100, 100);
         }
         stamper.close();
         // tmpDir.delete();
     }
 
-    public void msgManagement() throws IOException
+    private void writeOn(String text, PdfContentByte over, int posX, int posY)
+    {
+        over.beginText();
+        over.setTextMatrix(posX, posY); // Posicion relacionada al nombre del evento.
+        over.showText(text); // Texto del nombre del evento SOPORTA 40 CARACTERES
+        over.endText();
+    }
+
+    private void writeOnImage(Image imagen, Date date, PdfContentByte over, int posX, int posY) throws DocumentException
+    {
+        over.beginText();
+        imagen.setAbsolutePosition(posX, posY);
+        over.addImage(imagen);
+        over.endText();
+    }
+
+    private void msgManagement() throws IOException
     // MSG = ("destinatario", "userID", "eventID","seatID","dateEvent","codeMSG")
     {
         InputStream inStream = socket.getInputStream();
@@ -232,6 +259,12 @@ public class MailThread extends Thread
         {
             eCode = errorCode.msg_integrity;
             logger.error("Error code " + eCode + " - msg_integrity - destinatario [" + in[0] + "]");
+        }
+        if (destinatario == "")
+        {
+            eCode = errorCode.msg_badFormat;
+            logger.error("Error code " + eCode + "msg_badFormat - " +
+                    "Destinatario vacio, imposible mandar mensaje");
         }
 
         int tmpCode = Integer.parseInt(in[5]);
