@@ -11,7 +11,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 /**
- * @author Laptop
+ * @author Emmanuel Amaury
  *
  */
 public class MailServer
@@ -27,7 +27,7 @@ public class MailServer
         boolean alive = true;
         ServerSocket serverSocket;
 
-        logger.info("MAIL SERVER INICIADO CON EXITO EN PUERTO [ " + PORT + "]");
+        logger.info("MAIL SERVER INICIADO CON EXITO EN PUERTO [ " + PORT + " ]");
         try
         {
             serverSocket = new ServerSocket(PORT);
@@ -36,7 +36,7 @@ public class MailServer
                 while (alive)
                 {
                     Socket socket = serverSocket.accept();
-                    logger.info("Procesando nueva solicitud...");
+                    // logger.info("Procesando nueva solicitud...");
                     Thread mailThread = new MailThread(socket);
                     mailThread.start();
                 }
@@ -44,16 +44,15 @@ public class MailServer
             catch (IOException e)
             {
                 e.printStackTrace();
-                logger.error("Ocurrio un error en el server.");
+                logger.error("Ocurrio un error de operacion del servidor");
                 logger.error(e.getMessage());
             }
         }
-        catch (IOException e)
+        catch (Exception e)
         {
             e.printStackTrace();
-            logger.error("Ocurrio un error en el server.");
+            logger.error("Ocurrio un error en el server socket.");
             logger.error(e.getMessage());
         }
     }
-
 }

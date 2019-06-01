@@ -18,6 +18,7 @@ import javax.mail.BodyPart;
 import javax.mail.Message;
 import javax.mail.MessagingException;
 import javax.mail.Multipart;
+import javax.mail.SendFailedException;
 import javax.mail.Session;
 import javax.mail.Transport;
 import javax.mail.internet.InternetAddress;
@@ -54,6 +55,7 @@ public class MailThread extends Thread
         msg_integrity,
         msg_badFormat,
         doc_error,
+        null_account,
         generic,
     }
 
@@ -67,11 +69,15 @@ public class MailThread extends Thread
     private String userID = "00000";
     private String seatID = "##";
     private String dateEvent = "dd/mm/yyyy";
+    private String fileName = "";
     private Socket socket;
+    private File tmpDir = null;
+    private MailToFtp storeMail = null;
 
     private enum code // identifica los distintos tipos de mensajes
     {
         compra,
+        alerta,
     }
 
     private static code codeMSG = code.compra;
@@ -79,6 +85,13 @@ public class MailThread extends Thread
     MailThread(Socket socket)
     {
         this.socket = socket;
+    }
+
+    MailThread(Socket socket, String msgAsunto, String msgCuerpo)
+    {
+        this.socket = socket;
+        this.msgAsunto = msgAsunto;
+        this.msgCuerpo = msgCuerpo;
     }
 
     @Override
@@ -92,12 +105,21 @@ public class MailThread extends Thread
                 enviarCorreo(msgAsunto, msgCuerpo);
                 logger.info(
                         "Correo Enviado con exito a [" + destinatario + "] con el codigo de mensaje [" + codeMSG + "]");
+                storeMail = new MailToFtp(tmpDir, fileName);
+                storeMail.ftpUpdate();
             }
+
         }
         catch (DocumentException e)
         {
             eCode = errorCode.doc_error;
             logger.error("Error code " + eCode + " - DocumentException");
+            e.printStackTrace();
+        }
+        catch (SendFailedException e)
+        {
+            eCode = errorCode.null_account;
+            logger.error("Error code " + eCode + " - SendFailedException");
             e.printStackTrace();
         }
         catch (IOException e)
@@ -106,10 +128,27 @@ public class MailThread extends Thread
             logger.error("Error code " + eCode + " - IO Exception");
             e.printStackTrace();
         }
+        catch (MessagingException e)
+        {
+            // TODO Auto-generated catch block
+            e.printStackTrace();
+            eCode = errorCode.msg_badFormat;
+            logger.error("Error code " + eCode + " - Message error");
+        }
     }
 
+    /***
+     * Encargado de crear propiedades de un correo y enviarlo por el host definido
+     * al inicio de la clase usando un dominio de GMAIL
+     * 
+     * @param asunto
+     * @param cuerpo
+     * @throws DocumentException
+     * @throws IOException
+     * @throws MessagingException
+     */
     private void enviarCorreo(String asunto, String cuerpo)
-            throws IOException, DocumentException
+            throws DocumentException, IOException, MessagingException
     {
         Properties props = System.getProperties();
         props.put("mail.smtp.host", host); // El servidor SMTP de Google
@@ -126,38 +165,82 @@ public class MailThread extends Thread
         Session session = Session.getDefaultInstance(props);
         // creacion del mensaje MIME
         MimeMessage message = new MimeMessage(session);
+        switch (codeMSG)
+        {
+        case compra:
+            enviaMsgCompra(message, session);
+            break;
+        case alerta:
+            enviaMsgAlerta(message, session);
+            break;
+        }
+    }
+
+    /**
+     * Usado principalmente por el Monitor SNMP para realizar los mensajes de alerta
+     * al administrador
+     * 
+     * @param message
+     * @param session
+     * @throws MessagingException
+     */
+    private void enviaMsgAlerta(MimeMessage message, Session session) throws MessagingException
+    {
+        message.setFrom(new InternetAddress(user));
+        message.addRecipient(Message.RecipientType.TO, new InternetAddress(destinatario));
+        message.setSubject(msgAsunto);
+        // parte del mensaje de texto plano
+        BodyPart txtPart = new MimeBodyPart();
+        txtPart.setText(msgCuerpo);
+
+        Transport transport = session.getTransport("smtp");
+        transport.connect(host, port, user, pass);
+        transport.sendMessage(message, message.getAllRecipients());
+        transport.close();
+    }
+
+    /**
+     * Envia mensaje de confirmacion de compra al usuario, un archivo PDF adjunto
+     * con su boleto y detalles del evento solicitado
+     * 
+     * @param message
+     * @param session
+     * @throws IOException
+     * @throws DocumentException
+     */
+    private void enviaMsgCompra(MimeMessage message, Session session) throws IOException, DocumentException
+    {
         try
         {
+            fileName = "Compra" + userID + "-" + eventID + "-" + seatID + ".pdf";
+            tmpDir = new File("D:\\opt\\PDFBoletazo\\CorreosEnviados\\" + fileName);
+
             appendPdf(eventID, userID);
+
             message.setFrom(new InternetAddress(user));
-            message.addRecipient(Message.RecipientType.TO, new InternetAddress(destinatario)); // soporta varios
-                                                                                               // destinatarios[]
-            message.setSubject(asunto);
+            message.addRecipient(Message.RecipientType.TO, new InternetAddress(destinatario));
+            message.setSubject(msgAsunto);
 
             // parte del mensaje de texto plano
             BodyPart txtPart = new MimeBodyPart();
-            txtPart.setText(cuerpo);
+            txtPart.setText(msgCuerpo);
 
             // parte del mensaje de PDF
             BodyPart pdfPart = new MimeBodyPart();
-            String fileName = "Compra de boleto - " + userID + ".pdf";
-            DataSource source = new FileDataSource(
-                    "D:\\opt\\PDFBoletazo\\CorreosEnviados\\Compra de boleto - " + userID + ".pdf");
+            DataSource source = new FileDataSource(tmpDir);
             pdfPart.setDataHandler(new DataHandler(source));
             pdfPart.setFileName(fileName);
-            // creacion de un objeto multiparte para unir parte texto plano y pdf
+
             Multipart multiparte = new MimeMultipart();
             multiparte.addBodyPart(txtPart);
             multiparte.addBodyPart(pdfPart);
-            // unimos todas las partes en el mensaje MIME
-            message.setContent(multiparte);
 
+            message.setContent(multiparte);
             Transport transport = session.getTransport("smtp");
             transport.connect(host, port, user, pass);
             transport.sendMessage(message, message.getAllRecipients());
             transport.close();
-            File tmpDir = new File("D:\\opt\\PDFBoletazo\\CorreosEnviados\\Compra de boleto - " + userID + ".pdf");
-            tmpDir.delete();
+
         }
         catch (MessagingException me)
         {
@@ -165,85 +248,162 @@ public class MailThread extends Thread
         }
     }
 
+    /***
+     * Genera un nuevo PDF basado en un archivo base, esta funcion ademas modifica
+     * el PDF basados en los datos de compra del cliente
+     * 
+     * @param event
+     * @param userID
+     * @throws IOException
+     * @throws DocumentException
+     */
     private void appendPdf(String event, String userID)
             throws IOException, DocumentException
     {
-        String tmpUserPath = "D:\\opt\\PDFBoletazo\\CorreosEnviados\\Compra de boleto - " + userID + ".pdf";
         Date date = new Date();
 
         Image img_selloValidez = Image.getInstance(IMG_SELLO_PATH);
         PdfReader reader = new PdfReader(PDF_BASEPATH); // input PDF
         PdfStamper stamper = new PdfStamper(reader,
-                new FileOutputStream(tmpUserPath)); // output PDF
-        // File tmpDir = new File(tmpUserPath); // archivo
-        BaseFont bf = BaseFont.createFont(
-                BaseFont.HELVETICA, BaseFont.CP1252, BaseFont.NOT_EMBEDDED); // set font
-
-        // loop on pages (1-based)
+                new FileOutputStream(tmpDir)); // output PDF
         for (int i = 1; i <= reader.getNumberOfPages(); i++)
         {
-
-            // get object for writing over the existing content;
-            // you can also use getUnderContent for writing in the bottom layer
             PdfContentByte over = stamper.getOverContent(i);
 
-            // write text
-            over.beginText();
-            over.setFontAndSize(bf, 10); // Fuente y tamaño configurable
-            over.setTextMatrix(180, 540); // Posicion relacionada al nombre del evento.
-            over.showText(event); // Texto del nombre del evento SOPORTA 40
-                                  // CARACTERES
-            over.endText();
-            over.setTextMatrix(180, 530); // Posicion relacionada al nombre del evento.
-            over.showText("Cliente: " + userID); // texto numero de usuario que compro SOPORTA 40
-                                                 // CARACTERES
-            over.endText();
-            over.setTextMatrix(180, 520); // Posicion relacionada al nombre del evento.
-            over.showText("Asiento: " + seatID); // texto numero de usuario que compro SOPORTA 40
-                                                 // CARACTERES
-            over.endText();
-            over.setTextMatrix(180, 510); // Posicion relacionada al nombre del evento.
-            over.showText("Fecha: " + dateEvent); // texto numero de usuario que compro SOPORTA 40
-                                                  // CARACTERES
-            over.endText();
-            over.setTextMatrix(100, 70);
-            over.showText("Compra realizada con exito - " + DATE_FORMAT.format(date) + "  Hora de México");
-            img_selloValidez.setAbsolutePosition(100, 100);
-            over.addImage(img_selloValidez);
+            writeOn(event, over, 180, 540);
+            writeOn("Cliente: " + userID, over, 180, 530);
+            writeOn("Asiento: " + seatID, over, 180, 520);
+            writeOn("Fecha: " + dateEvent, over, 180, 510);
+            writeOn("Compra realizada con exito - " + DATE_FORMAT.format(date) + "  Hora de México",
+                    over, 100, 70);
+            writeOnImage(img_selloValidez, date, over, 100, 100);
         }
         stamper.close();
-        // tmpDir.delete();
     }
 
-    public void msgManagement() throws IOException
-    // MSG = ("destinatario", "userID", "eventID","seatID","dateEvent","codeMSG")
+    /**
+     * Escribe sobre el PDF, el texto indicado, en las posiciones indicadas y todo
+     * sobre el archivo de escritura PDF indicado
+     * 
+     * @param text
+     * @param over
+     * @param posX
+     * @param posY
+     * @throws DocumentException
+     * @throws IOException
+     */
+    private void writeOn(String text, PdfContentByte over, int posX, int posY) throws DocumentException, IOException
+    {
+        BaseFont bf = BaseFont.createFont(BaseFont.HELVETICA, BaseFont.CP1252, BaseFont.NOT_EMBEDDED); // set font
+        over.beginText();
+        over.setFontAndSize(bf, 10);
+        over.setTextMatrix(posX, posY); // Posicion relacionada al nombre del evento.
+        over.showText(text); // Texto del nombre del evento SOPORTA 40 CARACTERES
+        over.endText();
+    }
+
+    /**
+     * Inserta una imagen dentro del archivo PDF especificado en las posiciones
+     * establecidas
+     * 
+     * @param imagen
+     * @param date
+     * @param over
+     * @param posX
+     * @param posY
+     * @throws DocumentException
+     * @throws IOException
+     */
+    private void writeOnImage(Image imagen, Date date, PdfContentByte over, int posX, int posY)
+            throws DocumentException, IOException
+    {
+        BaseFont bf = BaseFont.createFont(BaseFont.HELVETICA, BaseFont.CP1252, BaseFont.NOT_EMBEDDED); // set font
+        over.beginText();
+        over.setFontAndSize(bf, 10);
+        imagen.setAbsolutePosition(posX, posY);
+        over.addImage(imagen);
+        over.endText();
+    }
+
+    /**
+     * Separa, verifica e instancia dentro de variables globales, la solicitud
+     * recibida del servidor boletazo
+     * 
+     * @throws IOException
+     */
+    private void msgManagement() throws IOException
     {
         InputStream inStream = socket.getInputStream();
         DataInputStream dataIn = new DataInputStream(inStream);
         String[] in = new String[MSG_INTEGRITY];
         in = dataIn.readUTF().toString().split(",");
-
+        int tmpCode = Integer.parseInt(in[in.length - 1]);
         destinatario = in[0];
-        userID = in[1];
-        eventID = in[2];
-        seatID = in[3];
-        dateEvent = in[4];
-        if (MSG_INTEGRITY != in.length)
-        {
-            eCode = errorCode.msg_integrity;
-            logger.error("Error code " + eCode + " - msg_integrity - destinatario [" + in[0] + "]");
-        }
 
-        int tmpCode = Integer.parseInt(in[5]);
         switch (tmpCode)
         {
         case 0:
+            // MSG = ("destinatario", "userID", "eventID","seatID","dateEvent","codeMSG")
             codeMSG = code.compra;
+            userID = in[1];
+            eventID = in[2];
+            seatID = in[3];
+            dateEvent = in[4];
+            if (MSG_INTEGRITY != in.length)
+            {
+                eCode = errorCode.msg_integrity;
+                logger.error("Error code " + eCode + " - msg_integrity - destinatario [" + in[0] + "]");
+            }
+            if (destinatario == "" || destinatario == null || destinatario == "null"
+                    || !destinatario.contains("@"))
+            {
+                eCode = errorCode.msg_badFormat;
+                logger.error("Error code " + eCode + "msg_badFormat - " +
+                        "Destinatario [ " + destinatario + " ], imposible mandar mensaje");
+            }
+            break;
+        case 1:
+            // MSG = ("destinatario", "msgAsunto", "msgCuerpo")
+            codeMSG = code.alerta;
+            eCode = errorCode.exito;
+            msgAsunto = in[1];
+            msgCuerpo = in[2];
             break;
         default:
             eCode = errorCode.msg_badFormat;
             logger.error("Error code " + eCode + " - msg_badFormat - destinatario [" + destinatario + "]");
             break;
         }
+
+    }
+
+    /**
+     * Se encarga de verificar el dominio dentro de la trama de solicitud del
+     * servidor boletazo
+     * 
+     * @param email
+     * @return true si es un dominio valido
+     */
+    private boolean emailVerification(String email)
+    {
+        String[] parts = email.split("@");
+        if (email.length() == 2)
+        {
+            if (parts[1].equalsIgnoreCase("hotmail.com")) { return true; }
+            if (parts[1].equalsIgnoreCase("gmail.com")) { return true; }
+            if (parts[1].equalsIgnoreCase("live.com.mx")) { return true; }
+            if (parts[1].equalsIgnoreCase("edu.com.mx")) { return true; }
+            if (parts[1].equalsIgnoreCase("yahoo.com"))
+            {
+                return true;
+            }
+            else
+            {
+                String[] anotherDomain = parts[1].split(".");
+                if (anotherDomain.length > 2) { return true; }
+            }
+        }
+        eCode = errorCode.null_account;
+        return false;
     }
 }
